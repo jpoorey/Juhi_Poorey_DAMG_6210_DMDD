@@ -1,0 +1,190 @@
+set serveroutput on;
+-- Here we perform creation of the tictactoegame table if it does not exist
+DECLARE
+  gamecnt NUMBER;
+BEGIN
+  SELECT count(*) INTO gamecnt FROM user_tables 
+    WHERE TABLE_NAME = 'MORPION';
+  IF gamecnt = 0 THEN
+    EXECUTE IMMEDIATE 'CREATE TABLE tictactoegame(
+      y NUMBER,
+      A CHAR,
+      B CHAR,
+      C CHAR
+    )';
+ END IF;
+END;
+/
+CREATE OR REPLACE FUNCTION colname(p IN NUMBER)
+RETURN CHAR
+IS
+BEGIN
+  IF p=1 THEN
+    RETURN 'A';
+  ELSIF p=2 THEN
+    RETURN 'B';
+  ELSIF p=3 THEN
+    RETURN 'C';
+  ELSE 
+    RETURN '_';
+  END IF;
+END;
+/
+-- procedure to display the game board
+CREATE OR REPLACE PROCEDURE game IS
+BEGIN
+  dbms_output.enable(10000);
+  dbms_output.put_line(' ');
+  FOR ll in (SELECT * FROM tictactoegame ORDER BY Y) LOOP
+    dbms_output.put_line('     ' || ll.A || ' ' || ll.B || ' ' || ll.C);
+  END LOOP; 
+  dbms_output.put_line(' ');
+END;
+/
+-- Procedure to reset the game
+CREATE OR REPLACE PROCEDURE startgame IS
+a NUMBER;
+BEGIN
+  DELETE FROM tictactoegame;
+  FOR a in 1..3 LOOP
+    INSERT INTO tictactoegame VALUES (a,'_','_','_');
+  END LOOP; 
+  dbms_output.enable(10000);
+  game();
+  dbms_output.put_line('Le jeu est pret. pour jouer : EXECUTE play(''X'', p, y);');
+END;
+/
+-- Below is the procedure to play
+CREATE OR REPLACE PROCEDURE play(mark IN VARCHAR2, q IN NUMBER, line IN NUMBER) IS
+val tictactoegame.a%type;
+r CHAR;
+mark2 CHAR;
+BEGIN
+  SELECT colname(q) INTO r FROM DUAL;
+  EXECUTE IMMEDIATE ('SELECT ' || r || ' FROM tictactoegame WHERE y=' || line) INTO val;
+  IF val='_' THEN
+    EXECUTE IMMEDIATE ('UPDATE tictactoegame SET ' || r || '=''' || mark || ''' WHERE y=' || line);
+    IF mark='X' THEN
+      mark2:='O';
+    ELSE
+      mark2:='X';
+    END IF;
+    game();
+    dbms_output.put_line('for playing run play (''' || mark2 || ''', p, y);');
+  ELSE
+    dbms_output.enable(10000);
+    dbms_output.put_line('You cannot play this square, it is already played');
+  END IF;
+END;
+/
+-- Here we have procedure to win
+CREATE OR REPLACE PROCEDURE winner(mark IN VARCHAR2) IS
+BEGIN
+  dbms_output.enable(10000);
+  game();
+  dbms_output.put_line('The player ' || mark || ' won'); 
+  dbms_output.put_line('---------------------------------------');
+  dbms_output.put_line('Lets Start a new game...');
+  startgame();
+END;
+/
+-- column query creation function
+CREATE OR REPLACE FUNCTION req(s IN VARCHAR2, mark IN VARCHAR2)
+RETURN VARCHAR2
+IS
+BEGIN
+  RETURN ('SELECT COUNT(*) FROM tictactoegame WHERE ' || s || ' = '''|| mark ||''' AND ' || s || ' != ''_''');
+END;
+/
+-- column query creation function
+CREATE OR REPLACE FUNCTION req1(s IN VARCHAR2, yvalue IN NUMBER)
+RETURN VARCHAR2
+IS
+BEGIN
+  RETURN ('SELECT '|| s ||' FROM tictactoegame WHERE y=' || yvalue);
+END;
+/
+-- column test function
+CREATE OR REPLACE FUNCTION success(s IN VARCHAR2)
+RETURN CHAR
+IS
+  cntsuccess NUMBER;
+  r VARCHAR2(56);
+BEGIN
+  SELECT req(s, 'X') into r FROM DUAL;
+  EXECUTE IMMEDIATE r INTO cntsuccess;
+  IF cntsuccess=3 THEN
+    RETURN 'X';
+  ELSIF cntsuccess=0 THEN
+    SELECT req(s, 'O') into r FROM DUAL;
+    EXECUTE IMMEDIATE r INTO cntsuccess;
+    IF cntsuccess=3 THEN
+      RETURN 'O';
+    END IF;
+  END IF;
+  RETURN '_';
+END;
+/
+CREATE OR REPLACE FUNCTION win(t1 IN CHAR, numcol IN NUMBER, numberline IN NUMBER)
+RETURN CHAR
+IS
+  t_var CHAR;
+  tx_var CHAR;
+  r VARCHAR2(56);
+BEGIN
+  SELECT req1(colname(numcol), numberline) INTO r FROM DUAL;
+  IF t1 IS NULL THEN
+    EXECUTE IMMEDIATE (r) INTO tx_var;
+  ELSIF NOT t1 = '_' THEN
+    EXECUTE IMMEDIATE (r) INTO tmpvar;
+    IF NOT t1 = tmpvar THEN
+      tx_var := '_';
+    END IF;
+  ELSE
+    tx_var := '_';
+  END IF;
+  RETURN tx_var;
+END;
+/
+-- numligntrigger de test si on gagnee
+CREATE OR REPLACE TRIGGER wins now
+AFTER UPDATE ON tictactoegame
+DECLARE
+  CURSOR line1 IS 
+    SELECT * FROM tictactoegame ORDER BY Y; 
+  finale tictactoegame%rowtype;
+  tmpvar CHAR;
+  t CHAR;
+  u CHAR;
+  r VARCHAR2(40);
+BEGIN
+  FOR finale IN line1 LOOP
+    -- line test
+    IF finale.A = finale.B AND finale.B = finale.C AND NOT finale.A='_' THEN
+      winner(finale.A);
+      EXIT;
+    END IF;
+    -- colon test
+    SELECT success(colname(finale.Y)) INTO tmpvar FROM DUAL;
+    IF NOT tmpvar = '_' THEN
+      winner(tmpvar);
+      EXIT;
+    END IF;
+    SELECT win(t, finale.Y, finale.Y) INTO t FROM dual;
+    SELECT win(u, 4-finale.Y, finale.Y) INTO u FROM dual;
+  END LOOP;
+  IF NOT t = '_' THEN
+    winner(t);
+  END IF;
+  IF NOT u = '_' THEN
+    winner(u);
+  END IF;
+END;
+/
+--
+EXECUTE startgame;
+EXECUTE play('X', 1, 3);
+EXECUTE play('O', 2, 1);
+EXECUTE play('X', 2, 2);
+EXECUTE play('O', 2, 3);
+EXECUTE play('X', 3, 1);
